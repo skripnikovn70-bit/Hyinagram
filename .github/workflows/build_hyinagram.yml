@@ -1,0 +1,65 @@
+name: Build Hyinagram APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: # Позволяет запускать сборку одной кнопкой на GitHub
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Скачивание исходников репозитория
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: 2. Установка Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 3. Авто-патчинг под Hyinagram (Внедрение мода)
+        run: |
+          echo "Меняем имя приложения на Hyinagram..."
+          find TMessagesProj/src/main/res -name "strings.xml" -exec sed -i 's/>Telegram</>Hyinagram</g' {} +
+          find TMessagesProj/src/main/res -name "strings.xml" -exec sed -i 's/>exteraGram</>Hyinagram</g' {} +
+          find TMessagesProj/src/main/res -name "strings.xml" -exec sed -i 's/>Nagram</>Hyinagram</g' {} +
+
+          echo "Меняем пакет приложения на org.hyinagram.messenger..."
+          sed -i 's/applicationId ".*"/applicationId "org.hyinagram.messenger"/g' TMessagesProj/build.gradle
+
+          echo "Патчим MessagesController (Анти-удаление, Нечиталка, Анти-реклама, Обход пересылки)..."
+          MC_FILE="TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java"
+          if [ -f "$MC_FILE" ]; then
+            # Блокировка удаления сообщений
+            sed -i '/public void markMessagesAsDeleted(/a if (org.telegram.messenger.HyinaManager.antiDelete) return;' "$MC_FILE"
+            # Блокировка галочек прочтения
+            sed -i '/private void completeReadTask(/a if (org.telegram.messenger.HyinaManager.ghostRead) return;' "$MC_FILE"
+            # Блокировка статуса "печатает..."
+            sed -i '/public CancelableRunnable sendTyping(/a if (org.telegram.messenger.HyinaManager.ghostTyping) return null;' "$MC_FILE"
+            # Вырезание спонсорской рекламы
+            sed -i '/public void getSponsoredMessages(/a if (org.telegram.messenger.HyinaManager.disableAds) return;' "$MC_FILE"
+            # Снятие ограничений на сохранение и пересылку из закрытых каналов
+            sed -i '/public boolean isChatNoForwards(TLRPC.Chat chat) {/a if (org.telegram.messenger.HyinaManager.bypassNoForwards) return false;' "$MC_FILE"
+          fi
+
+          echo "Патчим UserConfig (Локальный Telegram Premium)..."
+          UC_FILE="TMessagesProj/src/main/java/org/telegram/messenger/UserConfig.java"
+          if [ -f "$UC_FILE" ]; then
+            sed -i '/public boolean isPremium() {/a if (org.telegram.messenger.HyinaManager.localPremium) return true;' "$UC_FILE"
+          fi
+
+      - name: 4. Компиляция APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleAfatRelease --stacktrace || ./gradlew assembleDebug --stacktrace
+
+      - name: 5. Выгрузка готового Hyinagram.apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hyinagram-APK
+          path: |
+            TMessagesProj/build/outputs/apk/**/*.apk
